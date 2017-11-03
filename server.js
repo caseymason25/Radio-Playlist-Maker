@@ -34,7 +34,10 @@ var spotifySong = schedule.scheduleJob('*/6 * * * * *', function() {
 
 function getSpotifySong() {
   // requesting access token from refresh token
-  let _url = "https://api.spotify.com/v1/search?q=track:Agnes%20artist:Glass%20Animals&type=track";
+  let _song = "Say It Ain't So";
+  let _artist = "Weezer";
+  let _url =
+    "https://api.spotify.com/v1/search?q=track:" + _song + "%20artist:" + _artist + "&type=track";
   var authOptions = {
     url: _url,
     headers: {
@@ -44,15 +47,7 @@ function getSpotifySong() {
 
   request.get(authOptions, function(error, response, body) {
     if (!error && response.statusCode === 200) {
-      let _tracks = JSON.parse(body).tracks;
-
-      for (let i = 0; i < _tracks.items.length; i++) {
-        console.log("Number ", i, ": ");
-        console.log(_tracks.items[i].name);
-        console.log(_tracks.items[i].artists[0].name);
-        console.log(_tracks.items[i].uri);
-        console.log(" ");
-      }
+      checkTrack(body, _song, _artist);
 
     } else {
       console.log("body: ", body);
@@ -60,6 +55,69 @@ function getSpotifySong() {
   });
 
   // q=track:Agnes%20artist:Glass%20Animals&type=track
+}
+
+function checkTrack(responseBody, song, artist) {
+  let _tracks = JSON.parse(responseBody).tracks;
+
+  for (let i = 0; i < _tracks.items.length; i++) {
+    console.log("Number ", i, ": ");
+    console.log(_tracks.items[i].name);
+    console.log(_tracks.items[i].artists[0].name);
+    console.log(_tracks.items[i].uri);
+
+
+    if (_tracks.items[i].name == song && _tracks.items[i].artists[0].name == artist) {
+      console.log("This is the one!");
+      saveTrack(song, artist, _tracks.items[i].uri);
+    }
+    console.log(" ");
+  }
+}
+
+function saveTrack(song, artist, uri) {
+  let connection = mysql.createConnection({
+    host: 'localhost',
+    user: 'radio',
+    password: 'playlist',
+    database: 'radio_playlist_maker'
+  });
+
+  let spotifyID = -1;
+  connection.connect();
+
+  let spotifyInsert = "INSERT INTO spotify (uri) SELECT * FROM (SELECT " + connection.escape(uri) +
+    ") AS tmp WHERE NOT EXISTS (SELECT uri FROM spotify WHERE uri = " +
+    connection.escape(uri) + ") LIMIT 1; ";
+
+  connection.query(spotifyInsert, function(error,
+    results, fields) {
+    if (error) console.log(error);
+  });
+
+
+  let spotifySelect = "SELECT id FROM spotify WHERE uri = " + connection.escape(uri) + " LIMIT 1; ";
+
+  connection.query(spotifySelect, function(error,
+    results, fields) {
+    if (error) console.log(error);
+    console.log(results[0].id);
+    spotifyID = results[0].id;
+  });
+
+  console.log("spotifyID: ", spotifyID);
+  let songlistUpdate =
+    "UPDATE INTO songlist SET spotify_id = " + spotifyID + " WHERE song = " +
+    connection.escape(song) +
+    " AND artist = " + connection.escape(artist) + "; ";
+
+  connection.query(songlistUpdate, function(error,
+    results, fields) {
+    if (error) console.log(error);
+  });
+
+
+  connection.end();
 }
 
 
@@ -81,7 +139,8 @@ function refreshToken() {
 
   request.post(authOptions, function(error, response, body) {
     if (!error && response.statusCode === 200) {
-      console.log("Token Refreshed: ", _refresh_token);
+      console.log("Token Refreshed: ", body.access_token);
+      _access_token = body.access_token;
     }
   });
 }
@@ -154,11 +213,16 @@ function parseWebsite(name, url) {
     for (let i = 0; i < musicList.songs.length; i++) {
 
 
-      let upsertQueries = "INSERT INTO songlist (song,artist,station) SELECT * FROM (SELECT " + connection.escape(musicList.songs[i].title) + "," +
+      let upsertQueries =
+        "INSERT INTO songlist (song,artist,station) SELECT * FROM (SELECT " +
+        connection.escape(musicList.songs[i].title) + "," +
         connection
         .escape(musicList.songs[i].artist) +
-        "," + connection.escape(name) + ") AS tmp WHERE NOT EXISTS (SELECT song FROM songlist WHERE song = " + connection.escape(musicList.songs[i].title) +
-        " AND artist = " + connection.escape(musicList.songs[i].artist) + " AND station = " + connection.escape(name) +
+        "," + connection.escape(name) +
+        ") AS tmp WHERE NOT EXISTS (SELECT song FROM songlist WHERE song = " +
+        connection.escape(musicList.songs[i].title) +
+        " AND artist = " + connection.escape(musicList.songs[i].artist) +
+        " AND station = " + connection.escape(name) +
         " AND create_dttm >= NOW() - INTERVAL 10 MINUTE) LIMIT 1; ";
 
       connection.query(upsertQueries, function(error,
@@ -185,7 +249,8 @@ app.get('/login', function(req, res) {
   res.cookie(stateKey, state);
 
   // your application requests authorization
-  var scope = 'user-read-private user-read-email playlist-modify-public playlist-modify-private';
+  var scope =
+    'user-read-private user-read-email playlist-modify-public playlist-modify-private';
   res.redirect('https://accounts.spotify.com/authorize?' +
     querystring.stringify({
       response_type: 'code',
