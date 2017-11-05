@@ -45,7 +45,6 @@ var spotifySong = schedule.scheduleJob('*/6 * * * * *', function() {
     return checkTrack(data.body, data.song, data.artist);
   })
   .then(function(data) {
-    console.log("checkTrack done: ", data);
     return saveSpotifyData(data.song, data.artist, data.uri);
   })
   .then(function(data) {
@@ -55,6 +54,53 @@ var spotifySong = schedule.scheduleJob('*/6 * * * * *', function() {
     console.log("Spotify Song Error: ", error);
   });
 });
+
+var matchSongs = schedule.scheduleJob('*/5 * * * * *', function() {
+  let _song = "Say It Ain't So";
+  let _artist = "Weezer";
+
+  getSpotifySong(_song, _artist)
+  .then(function(data) {
+    return checkTrack(data.body, data.song, data.artist);
+  })
+  .then(function(data) {
+    return saveSpotifyData(data.song, data.artist, data.uri);
+  })
+  .then(function(data) {
+    console.log("Saved data for song: ", data);
+  })
+  .catch(function(error) {
+    console.log("Spotify Song Error: ", error);
+  });
+});
+
+
+function getSongsFromDB() {
+  return new Promise(function(fulfill,reject) {
+    let songs = [];
+    db.getConnection(function(err,songsdb) {
+      if(err) {
+        return reject("getSongsFromDB -conn|"+err);
+      }
+      let songsQuery = "SELECT song, artist FROM songlist WHERE spotify_id IS NULL;";
+
+      songsdb.query(songsQuery)
+      .on('error',function(err) {
+        songsdb.release();
+        return reject("getSongsFromDB query error: " + err);
+      })
+      .on('result', function (row) {
+        songs.push({'song':row.song, 'artist':row.artist});
+      })
+      .on('end', function () {
+
+      });
+      songsdb.release();
+      return fulfill(songs);
+    });
+  });
+}
+
 
 function getSpotifySong(song, artist) {
   return new Promise(function(fulfill,reject) {
@@ -73,7 +119,7 @@ function getSpotifySong(song, artist) {
         fulfill({'body':JSON.parse(body).tracks, 'song':song, 'artist':artist});
       } else {
         console.log("body: ", body);
-        reject("getSpotifySong requet error: " + response.statusCode);
+        reject("getSpotifySong requet error: " + error);
       }
     });
 
@@ -88,18 +134,18 @@ function checkTrack(tracks, song, artist) {
     let _tracks = tracks;
 
     for (let i = 0; i < _tracks.items.length; i++) {
-      console.log("Number ", i, ": ");
-      console.log(_tracks.items[i].name);
-      console.log(_tracks.items[i].artists[0].name);
-      console.log(_tracks.items[i].uri);
+      // console.log("Number ", i, ": ");
+      // console.log(_tracks.items[i].name);
+      // console.log(_tracks.items[i].artists[0].name);
+      // console.log(_tracks.items[i].uri);
 
 
       if (_tracks.items[i].name == song && _tracks.items[i].artists[0].name == artist) {
-        console.log("This is the one!");
+        //console.log("This is the one!");
         fulfill({'song': song, 'artist': artist, 'uri':_tracks.items[i].uri});
         i = _tracks.items.length;
       }
-      console.log(" ");
+      //console.log(" ");
     }
     reject("No match found for song " + song);
   });
@@ -126,9 +172,9 @@ function saveSpotifyData(song, artist, uri) {
           return reject("saveSpotifyData query error: " + err);
         })
         .on('result', function (row) {
-          console.log(row.id);
+          //console.log(row.id);
           let songlistUpdate = "UPDATE songlist SET spotify_id = " + row.id + " WHERE song = " + spotifydb.escape(song) +" AND artist = " + spotifydb.escape(artist) + "; ";
-          console.log("songlistUpdate: ", songlistUpdate);
+          //console.log("songlistUpdate: ", songlistUpdate);
           spotifydb.query(songlistUpdate)
           .on('error',function(err) {
             return reject("saveSpotifyData query error: " + err);
@@ -182,80 +228,79 @@ var generateRandomString = function(length) {
 var stateKey = 'spotify_auth_state';
 
 function parseWebsite(name, url) {
-  //let url = 'http://krbz.tunegenie.com/';
-  let musicList = {};
-  let songs = [];
-  let _error = "";
+  return new Promise(function(fulfill,reject) {
+    //let url = 'http://krbz.tunegenie.com/';
+    let musicList = {};
+    let songs = [];
+    let _error = "";
 
-  musicList.songs = songs;
+    musicList.songs = songs;
 
-  request(url, function(error, response, html) {
-    if (!error) {
-      let $ = cheerio.load(html);
-      let title, artist, song;
-      let count = 0;
-
-
-      // The songs are located in 2 spots. Use hidden on open to only get 1 result per song
-      $('.hidden-on-open .song').filter(function() {
-        let data = $(this);
-
-        // Get the title from the .song div
-        title = data.text().trim();
-
-        // artist is in the next div, which has no class
-        artist = data.next().text().trim();
-
-        // build the song
-        song = {
-          "title": title,
-          "artist": artist
-        };
-
-        // add the song to the list of songs
-        musicList.songs.push(song);
-
-      });
-    } else if (error) {
-      _error += error + " || ";
-    }
-
-    let connection = mysql.createConnection({
-      host: 'localhost',
-      user: 'radio',
-      password: 'playlist',
-      database: 'radio_playlist_maker'
-    });
-
-    connection.connect();
-
-    for (let i = 0; i < musicList.songs.length; i++) {
+    request(url, function(error, response, html) {
+      if (!error) {
+        let $ = cheerio.load(html);
+        let title, artist, song;
+        let count = 0;
 
 
-      let upsertQueries =
-      "INSERT INTO songlist (song,artist,station) SELECT * FROM (SELECT " +
-      connection.escape(musicList.songs[i].title) + "," +
-      connection
-      .escape(musicList.songs[i].artist) +
-      "," + connection.escape(name) +
-      ") AS tmp WHERE NOT EXISTS (SELECT song FROM songlist WHERE song = " +
-      connection.escape(musicList.songs[i].title) +
-      " AND artist = " + connection.escape(musicList.songs[i].artist) +
-      " AND station = " + connection.escape(name) +
-      " AND create_dttm >= NOW() - INTERVAL 10 MINUTE) LIMIT 1; ";
+        // The songs are located in 2 spots. Use hidden on open to only get 1 result per song
+        $('.hidden-on-open .song').filter(function() {
+          let data = $(this);
 
-      connection.query(upsertQueries, function(error,
-        results, fields) {
-          if (error) _error += error + " || ";
+          // Get the title from the .song div
+          title = data.text().trim();
+
+          // artist is in the next div, which has no class
+          artist = data.next().text().trim();
+
+          // build the song
+          song = {
+            "title": title,
+            "artist": artist
+          };
+
+          // add the song to the list of songs
+          musicList.songs.push(song);
+
         });
+      } else if (error) {
+        _error += error + " || ";
       }
-      connection.end();
+      
+      db.getConnection(function(err,parsedb) {
+
+        for (let i = 0; i < musicList.songs.length; i++) {
+
+
+          let upsertQueries =
+          "INSERT INTO songlist (song,artist,station) SELECT * FROM (SELECT " +
+          parsedb.escape(musicList.songs[i].title) + "," +
+          connection
+          .escape(musicList.songs[i].artist) +
+          "," + parsedb.escape(name) +
+          ") AS tmp WHERE NOT EXISTS (SELECT song FROM songlist WHERE song = " +
+          parsedb.escape(musicList.songs[i].title) +
+          " AND artist = " + parsedb.escape(musicList.songs[i].artist) +
+          " AND station = " + parsedb.escape(name) +
+          " AND create_dttm >= NOW() - INTERVAL 10 MINUTE) LIMIT 1; ";
+
+
+          parsedb.query(upsertQueries)
+          .on('error',function(err) {
+            parsedb.release();
+            return reject("parsedb query error: " + err);
+          })
+          .on('end', function () {
+            parsedb.release();
+          });
+          if (_error.length > 0) {
+            console.log("ERROR: ", _error);
+          } else {
+            console.log("Function Complete!");
+          }
+        }
+      });
     });
-    if (_error.length > 0) {
-      console.log("ERROR: ", _error);
-    } else {
-      console.log("Function Complete!");
-    }
   }
 
 
